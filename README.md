@@ -27,6 +27,18 @@ qk80.py video  tests/anim.gif       # GIF    -> Themes -> Default Theme
 qk80.py slider tests/black.png tests/red.png   # album -> Apps -> Custom Animation
 ```
 
+This started as a personal project, and it's shared as a **learning resource**:
+the protocol reverse-engineering (`PROTOCOL.md`), the encoder byte layouts, and
+the library API are all documented so you can understand how it works, use it in
+your own programs, or build on top of it. Fork it, borrow the code, or open a PR
+— it's MIT-licensed.
+
+The code was developed with the help of AI assistants as pair-programming
+partners (design, implementation, and review). It's intentionally written to be
+readable: comments explain the *why* (for example the firmware hue-wheel
+compensation quirk in `qk80.py`), so you can trace how the pieces fit together
+and take them into your own projects.
+
 ## 2. Quick start
 
 ```powershell

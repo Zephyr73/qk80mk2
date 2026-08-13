@@ -6,8 +6,9 @@ Reverse-engineered from the official configurator at `cfg.qwertykeys.com`
 QK80 MK2 (`VID 0x514B, PID 0x4D02`).
 
 Scope: talking to the keyboard, uploading LCD images/animations and Matrix LED
-lighting, and the on-disk formats (`ABKG`, `ANIM`, `tabml`). Firmware upload is
-described but the binary format of the firmware image itself is unknown/private.
+lighting, and the on-disk formats (`ABKT`/`ABKG`, `ANIT`/`ANIM`,
+`ANPT`/`ANPS`, `tabml`). Firmware upload is described but the binary format of
+the firmware image itself is unknown/private.
 
 Reference implementation: [`qk80.py`](qk80.py) (pure Python, no wasm).
 
@@ -63,7 +64,9 @@ The HID `0xD1` path is still implemented and works as a fallback.
 
 * Response (read back 33 bytes, report ID again first):
   payload `[0]` echoes the command and `[1..]` echoes the arguments before any
-  data/status bytes.
+  data/status bytes. Exception: tab-block responses (`0xD1`) echo `[0xFF, ...]`
+  with the `0xD1` byte dropped (the two layout styles are handled in
+  `qk80.py`'s `HIDTransport._send`).
 * Tab file chunk payload: 25 bytes per packet (inside the 32-byte payload).
 
 ### CDC (serial)
