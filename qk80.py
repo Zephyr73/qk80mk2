@@ -1,4 +1,4 @@
-"""
+﻿"""
 qk80.py - QK80 MK2 / tabkb LCD + Matrix LED protocol library.
 
 Reverse-engineered from cfg.qwertykeys.com (deployed bundle) and the
@@ -223,9 +223,13 @@ def album_to_slider(images: List[str], interval_sec: int, anim: int,
 
 def encode_tabml(frames: List[Image.Image], fps: int, rows: int, cols: int) -> bytes:
     """List of RGB frames (each rows*cols) -> 'tabml' file bytes."""
+    n = len(frames)
+    for name, value in (("frames", n), ("fps", fps), ("rows", rows), ("cols", cols)):
+        if not 0 <= value <= 255:
+            raise ValueError(f"encode_tabml: {name} must be 0-255, got {value}")
     header = bytearray(32)
     header[0:5] = b"tabml"
-    header[5] = len(frames)
+    header[5] = n
     header[6] = fps
     header[7] = rows
     header[8] = cols
@@ -239,6 +243,8 @@ def matrix_hsv_data(frames: List[Image.Image], rows: int, cols: int) -> bytes:
     """RGB frames -> HSV upload bytes ([H,S,V] per LED per frame, 0-255)."""
     out = bytearray()
     for f in frames:
+        if f.size != (cols, rows):
+            raise ValueError(f"matrix frame must be {cols}x{rows}, got {f.size[0]}x{f.size[1]}")
         raw = f.convert("RGB").tobytes()
         for i in range(0, len(raw), 3):
             out += bytes(rgb_to_hsv256(raw[i], raw[i + 1], raw[i + 2]))
@@ -450,7 +456,8 @@ class CDCTransport:
                 self._write(CDC_FILE_BUFFER, be32(off) + bytes([len(chunk)]) + chunk)
                 if flow:
                     r = self._read_response()
-                    if not self._echo_ok(r, be32(off) + bytes([len(chunk)]) + chunk):
+                    if not self._echo_ok(r, CDC_FILE_BUFFER,
+                                         be32(off) + bytes([len(chunk)]) + chunk):
                         raise RuntimeError("bad CDC response echo")
                 if progress:
                     progress.step(len(chunk))
@@ -473,7 +480,8 @@ class CDCTransport:
                 self._write(CDC_MATRIX_BUFFER, be32(off) + bytes([len(chunk)]) + chunk)
                 if flow:
                     r = self._read_response()
-                    if not self._echo_ok(r, be32(off) + bytes([len(chunk)]) + chunk):
+                    if not self._echo_ok(r, CDC_MATRIX_BUFFER,
+                                         be32(off) + bytes([len(chunk)]) + chunk):
                         raise RuntimeError("bad CDC response echo")
                 if progress:
                     progress.step(len(chunk))
@@ -482,8 +490,8 @@ class CDCTransport:
             raise
 
     @staticmethod
-    def _echo_ok(resp: bytes, args: bytes) -> bool:
-        return resp[0] != 0 and resp[1:1 + len(args)] == args
+    def _echo_ok(resp: bytes, cmd: int, args: bytes) -> bool:
+        return resp[0] == cmd and resp[1:1 + len(args)] == args
 
 
 class HIDTransport:
@@ -928,7 +936,7 @@ def main():
 
     a = ap.parse_args()
 
-    def upload(transport, data: bytes) -> None:
+    def _cli_upload(transport, data: bytes) -> None:
         progress = Progress(callback=lambda d, t: print(f"  {d}/{t} bytes"))
         progress.total = len(data)
         transport.set_tab_file(data, progress)
@@ -936,6 +944,9 @@ def main():
     transport = None
     try:
         if a.cmd == "matrix":
+            if a.action is None:
+                p_mat.print_help()  # bare `matrix` must not touch the device
+                return
             # 'matrix <color>' is shorthand for 'matrix color <color>'; both
             # need HID for the mode color. Custom-grid ops use --transport.
             hid_action = (a.action in MATRIX_COLORS or a.action == "color"
@@ -953,11 +964,11 @@ def main():
             if a.cmd == "devices":
                 _show_devices()
             elif a.cmd == "image":
-                img = Image.open(a.src)
-                if a.variant == "theme":
-                    data = encode_image(img)
-                else:
-                    data = encode_image(img, magic=b"ABKG")
+                with Image.open(a.src) as img:
+                    if a.variant == "theme":
+                        data = encode_image(img)
+                    else:
+                        data = encode_image(img, magic=b"ABKG")
                 print(f"encoded {data[:4].decode()} "
                       f"({'theme image' if a.variant == 'theme' else 'custom image'}) "
                       f"({len(data)} bytes)")
@@ -965,14 +976,14 @@ def main():
                     open(a.save, "wb").write(data)
                     print(f"  saved -> {a.save}")
                 if transport:
-                    upload(transport, data)
+                    _cli_upload(transport, data)
                     print("image uploaded")
             elif a.cmd == "video":
-                gif = Image.open(a.src)
-                if a.variant == "theme":
-                    data = gif_to_video(gif, a.max_frames)
-                else:
-                    data = gif_to_video(gif, a.max_frames, magic=b"ANIM")
+                with Image.open(a.src) as gif:
+                    if a.variant == "theme":
+                        data = gif_to_video(gif, a.max_frames)
+                    else:
+                        data = gif_to_video(gif, a.max_frames, magic=b"ANIM")
                 print(f"encoded {data[:4].decode()} "
                       f"({'theme animation' if a.variant == 'theme' else 'custom animation'}) "
                       f"({len(data)} bytes)")
@@ -980,7 +991,7 @@ def main():
                     open(a.save, "wb").write(data)
                     print(f"  saved -> {a.save}")
                 if transport:
-                    upload(transport, data)
+                    _cli_upload(transport, data)
                     print("animation uploaded")
             elif a.cmd == "slider":
                 files = sorted(a.src)
@@ -990,7 +1001,7 @@ def main():
                     open(a.save, "wb").write(data)
                     print(f"  saved -> {a.save}")
                 if transport:
-                    upload(transport, data)
+                    _cli_upload(transport, data)
                     print("slider uploaded")
             elif a.cmd == "matrix":
                 action = a.action
