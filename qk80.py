@@ -115,11 +115,13 @@ def resize_cover(img: Image.Image, width: int = SCREEN_W, height: int = SCREEN_H
     return img.crop((x, y, x + width, y + height))
 
 
-def encode_abkg(img: Image.Image, magic: bytes = b"ABKG") -> bytes:
-    """PIL image -> ABKG/ABKT bytes (20-byte header + raw RGB565).
+def encode_image(img: Image.Image, magic: bytes = b"ABKT") -> bytes:
+    """PIL image -> ABKT/ABKG bytes (20-byte header + raw RGB565).
 
-    ABKG = "Custom Image", ABKT = "Theme" image. Identical layout; only the
-    4-byte magic differs (the firmware routes the two to different screens).
+    ABKT = "Theme" image (default, lands on Themes -> Default Theme),
+    ABKG = "Custom Image" (Apps -> Custom Animation). Identical layout; only
+    the 4-byte magic differs (the firmware routes the two to different
+    screens).
     """
     img = resize_cover(img)
     pixels = to_rgb565(img)
@@ -136,37 +138,36 @@ def encode_abkg(img: Image.Image, magic: bytes = b"ABKG") -> bytes:
     )
 
 
-def encode_anim(frames: List[Image.Image], durations_ms: List[int],
-                magic: bytes = b"ANIM") -> bytes:
-    """PIL frames + durations (ms) -> ANIM/ANIT bytes (header + RGB565 frames).
+def encode_video(frames: List[Image.Image], durations_ms: List[int],
+                 magic: bytes = b"ANIT") -> bytes:
+    """PIL frames + durations (ms) -> ANIT/ANIM bytes (header + RGB565 frames).
 
-    ANIM = "Custom Animation", ANIT = "Theme" video. Identical layout; only the
-    4-byte magic differs (the firmware routes the two to different screens).
+    ANIT = "Theme" video (default, lands on Themes -> Default Theme),
+    ANIM = "Custom Animation" (Apps). Identical layout; only the 4-byte magic
+    differs (the firmware routes the two to different screens).
     """
     if not frames:
         raise ValueError("no frames")
     assert len(frames) == len(durations_ms), "frames/durations length mismatch"
     n = len(frames)
+    encoded = [to_rgb565(resize_cover(f)) for f in frames]  # encode once
     header_size = 20 + 2 * n
     header = (
         magic
         + struct.pack("<H", 20)
         + struct.pack("<H", header_size)
-        + struct.pack("<I", header_size + sum(
-            len(to_rgb565(resize_cover(f))) for f in frames
-        ))
+        + struct.pack("<I", header_size + sum(len(b) for b in encoded))
         + struct.pack("<H", SCREEN_W)
         + struct.pack("<H", SCREEN_H)
         + struct.pack("<H", 0)
         + struct.pack("<H", n)
     )
     durations = b"".join(struct.pack("<H", d) for d in durations_ms)
-    body = b"".join(to_rgb565(resize_cover(f)) for f in frames)
-    return header + durations + body
+    return header + durations + b"".join(encoded)
 
 
-def gif_to_anim(gif: Image.Image, max_frames: int = 500, magic: bytes = b"ANIM") -> bytes:
-    """Open an animated GIF and encode it as ANIM/ANIT."""
+def gif_to_video(gif: Image.Image, max_frames: int = 500, magic: bytes = b"ANIT") -> bytes:
+    """Open an animated GIF and encode it as ANIT/ANIM."""
     frames: List[Image.Image] = []
     durations: List[int] = []
     try:
@@ -177,15 +178,16 @@ def gif_to_anim(gif: Image.Image, max_frames: int = 500, magic: bytes = b"ANIM")
         gif.seek(i)
         frames.append(gif.convert("RGB").copy())
         durations.append(int(gif.info.get("duration", 100)) or 100)
-    return encode_anim(frames, durations, magic)
+    return encode_video(frames, durations, magic)
 
 
-def encode_anps(frames: List[Image.Image], interval_sec: int, anim: int,
-                magic: bytes = b"ANPS") -> bytes:
+def encode_slider(frames: List[Image.Image], interval_sec: int, anim: int,
+                  magic: bytes = b"ANPS") -> bytes:
     """PIL frames + slide interval(s) + transition -> ANPS/ANPT bytes.
 
-    ANPS = "Custom Slider", ANPT = theme slider. Same layout: 24-byte header
-    (base + u16 interval_sec + u16 transition) + raw RGB565 frames.
+    ANPS = "Custom Slider" (default, lands on Apps -> Custom Animation),
+    ANPT = "Theme" slider (Themes). Same layout: 24-byte header (base + u16
+    interval_sec + u16 transition) + raw RGB565 frames.
     """
     if not frames:
         raise ValueError("no frames")
@@ -207,14 +209,14 @@ def encode_anps(frames: List[Image.Image], interval_sec: int, anim: int,
     return header + body
 
 
-def album_to_anps(images: List[str], interval_sec: int, anim: int,
-                  max_frames: int = 500, magic: bytes = b"ANPS") -> bytes:
-    """Import a folder/album of images -> ANPS custom slider."""
+def album_to_slider(images: List[str], interval_sec: int, anim: int,
+                    max_frames: int = 500, magic: bytes = b"ANPS") -> bytes:
+    """Import a folder/album of images -> ANPS/ANPT slider."""
     frames = []
     for path in images[:max_frames]:
         with Image.open(path) as im:
             frames.append(im.copy())
-    return encode_anps(frames, interval_sec, anim, magic)
+    return encode_slider(frames, interval_sec, anim, magic)
 
 
 # --- Matrix LED -----------------------------------------------------------
@@ -244,19 +246,24 @@ def matrix_hsv_data(frames: List[Image.Image], rows: int, cols: int) -> bytes:
 
 
 def rgb_to_hsv256(r: int, g: int, b: int):
-    """RGB(0-255) -> [H,S,V] each 0-255, matching the site's get256HSV()."""
+    """RGB(0-255) -> [H,S,V] each 0-255, matching the site's get256HSV().
+
+    Deliberately hand-rolled instead of :func:`colorsys.rgb_to_hsv`: this math
+    reproduces the configurator's ``get256HSV()`` byte-for-byte, so the HSV
+    bytes we send are identical to the official tool's.
+    """
     rp, gp, bp = r / 255, g / 255, b / 255
     cmax, cmin = max(rp, gp, bp), min(rp, gp, bp)
     delta = cmax - cmin
     h = 0.0
-    if delta == 0:
-        h = 0.0
-    elif cmax == rp:
-        h = 60 * (((gp - bp) / delta) % 6)
-    elif cmax == gp:
-        h = 60 * ((bp - rp) / delta + 2)
-    else:
-        h = 60 * ((rp - gp) / delta + 4)
+    if delta:
+        # delta == 0 is a pure gray (all channels equal): h stays 0.
+        if cmax == rp:
+            h = 60 * (((gp - bp) / delta) % 6)
+        elif cmax == gp:
+            h = 60 * ((bp - rp) / delta + 2)
+        else:
+            h = 60 * ((rp - gp) / delta + 4)
     s = 0.0 if cmax == 0 else delta / cmax
     v = cmax
     h = (h + 360) % 360
@@ -323,14 +330,7 @@ def matrix_solid_hsv(color: str) -> bytes:
 
 def matrix_blank_hsv() -> bytes:
     """One 7x7 frame with every LED off (the factory default Custom pattern)."""
-    frame = Image.new("RGB", (MATRIX_COLS, MATRIX_ROWS), (0, 0, 0))
-    return _matrix_frame_to_hsv(frame)
-
-
-def _solid_frame_rgb(rgb: Sequence[int]) -> bytes:
-    """RGB(0-255) tuple -> one 7x7 HSV solid frame (all LEDs the same color)."""
-    frame = Image.new("RGB", (MATRIX_COLS, MATRIX_ROWS), tuple(rgb))
-    return _matrix_frame_to_hsv(frame)
+    return matrix_solid_hsv("off")
 
 
 def matrix_pattern_rgb(pattern: Sequence[str], color: str) -> List[tuple]:
@@ -403,6 +403,14 @@ class CDCTransport:
     def close(self):
         if self.ser and self.ser.is_open:
             self.ser.close()
+
+    def __enter__(self):
+        self.open()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+        return False
 
     def _write(self, cmd: int, args: bytes):
         packet = bytearray(CDC_BUFFER_SIZE)
@@ -500,6 +508,14 @@ class HIDTransport:
     def close(self):
         if self.device:
             self.device.close()
+
+    def __enter__(self):
+        self.open()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+        return False
 
     def _send(self, cmd: int, args: bytes) -> bytes:
         packet = bytearray(HID_REPORT)
@@ -636,21 +652,17 @@ def upload(data: bytes, transport: str = "cdc", port: Optional[str] = None,
 
     The recommended entry point for library users:
 
-        data = qk80.encode_abkg(Image.open("photo.png"))
+        data = qk80.encode_image(Image.open("photo.png"))
         qk80.upload(data)
 
     Ctrl+C is safe: the keyboard is sent a cancel command before the port is
     released, so an interrupted upload never leaves the device stuck.
     """
-    t = CDCTransport(port) if transport == "cdc" else HIDTransport()
-    t.open()
-    try:
+    with CDCTransport(port) if transport == "cdc" else HIDTransport() as t:
         prog = Progress(callback=progress_cb) if progress_cb else None
         if prog:
             prog.total = len(data)
         t.set_tab_file(data, prog)
-    finally:
-        t.close()
 
 
 def set_matrix_color(color: str, port: Optional[str] = None) -> None:
@@ -663,12 +675,8 @@ def set_matrix_color(color: str, port: Optional[str] = None) -> None:
     """
     rgb = parse_color([color])
     h, s, _v = rgb_to_hsv256(*rgb)
-    t = HIDTransport()
-    t.open()
-    try:
+    with HIDTransport() as t:
         t.set_matrix_led(color=(h, s))
-    finally:
-        t.close()
 
 
 def set_matrix_custom(color: str, transport: str = "cdc",
@@ -680,13 +688,10 @@ def set_matrix_custom(color: str, transport: str = "cdc",
     Ctrl+C is safe.
     """
     rgb = parse_color([color])
-    data = _solid_frame_rgb(rgb)
-    t = CDCTransport(port) if transport == "cdc" else HIDTransport()
-    t.open()
-    try:
+    frame = Image.new("RGB", (MATRIX_COLS, MATRIX_ROWS), rgb)
+    data = _matrix_frame_to_hsv(frame)
+    with CDCTransport(port) if transport == "cdc" else HIDTransport() as t:
         t.set_matrix_lighting(1, 1, MATRIX_ROWS, MATRIX_COLS, data)
-    finally:
-        t.close()
 
 
 def set_matrix_pattern(pattern: Sequence[str], color: str, transport: str = "cdc",
@@ -709,23 +714,15 @@ def set_matrix_pattern(pattern: Sequence[str], color: str, transport: str = "cdc
         raise ValueError(f"unknown matrix color {color!r}; choose from "
                          f"{MATRIX_COLOR_NAMES}")
     data = matrix_pattern_hsv(pattern, color)
-    t = CDCTransport(port) if transport == "cdc" else HIDTransport()
-    t.open()
-    try:
+    with CDCTransport(port) if transport == "cdc" else HIDTransport() as t:
         t.set_matrix_lighting(1, 1, MATRIX_ROWS, MATRIX_COLS, data)
-    finally:
-        t.close()
 
 
 def reset_matrix(transport: str = "cdc", port: Optional[str] = None) -> None:
     """Restore the Custom matrix mode to its factory default (all LEDs off)."""
     data = matrix_blank_hsv()
-    t = CDCTransport(port) if transport == "cdc" else HIDTransport()
-    t.open()
-    try:
+    with CDCTransport(port) if transport == "cdc" else HIDTransport() as t:
         t.set_matrix_lighting(1, 1, MATRIX_ROWS, MATRIX_COLS, data)
-    finally:
-        t.close()
 
 
 def parse_color(spec: Sequence[str]) -> tuple:
@@ -767,22 +764,14 @@ def set_matrix_brightness(percent: int, port: Optional[str] = None) -> None:
     if not 1 <= percent <= 100:
         raise ValueError("matrix LED brightness must be 1-100%")
     value = round(percent * 255 / 100)
-    t = HIDTransport()
-    t.open()
-    try:
+    with HIDTransport() as t:
         t.set_matrix_led(brightness=value)
-    finally:
-        t.close()
 
 
 def set_matrix_effect(name: str, port: Optional[str] = None) -> None:
     """Switch the matrix mode: off / typewriter / terminal / raindrop / custom."""
-    t = HIDTransport()
-    t.open()
-    try:
+    with HIDTransport() as t:
         t.set_matrix_led(effect=name)
-    finally:
-        t.close()
 
 
 def get_matrix_led(port: Optional[str] = None) -> dict:
@@ -792,12 +781,8 @@ def get_matrix_led(port: Optional[str] = None) -> dict:
     "color": (hue, sat)}`` where ``color`` is the raw (hue, sat) the firmware
     stores (use :func:`hsv256_to_rgb` to display it as RGB).
     """
-    t = HIDTransport()
-    t.open()
-    try:
+    with HIDTransport() as t:
         return t.get_matrix_led()
-    finally:
-        t.close()
 
 
 def probe_devices() -> dict:
@@ -873,14 +858,15 @@ def main():
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     def add_common(p):
+        up = p.add_mutually_exclusive_group()
+        up.add_argument("--upload", action="store_true",
+                        help="upload to the keyboard (this is the default)")
+        up.add_argument("--no-upload", action="store_true",
+                        help="encode only, do not upload")
         p.add_argument("--transport", choices=["cdc", "hid"], default="cdc",
                        help="upload transport (default: cdc)")
         p.add_argument("--port", default=None, help="serial port (CDC only)")
         p.add_argument("--save", default=None, help="also save the encoded file")
-        p.add_argument("--upload", action="store_true",
-                       help="upload to the keyboard (this is the default)")
-        p.add_argument("--no-upload", action="store_true",
-                       help="encode only, do not upload")
 
     p_img = sub.add_parser("image", help="PNG/JPG -> ABKT theme / ABKG custom image")
     p_img.add_argument("src")
@@ -942,9 +928,6 @@ def main():
 
     a = ap.parse_args()
 
-    if getattr(a, "upload", False):
-        setattr(a, "no_upload", False)
-
     def upload(transport, data: bytes) -> None:
         progress = Progress(callback=lambda d, t: print(f"  {d}/{t} bytes"))
         progress.total = len(data)
@@ -971,7 +954,10 @@ def main():
                 _show_devices()
             elif a.cmd == "image":
                 img = Image.open(a.src)
-                data = encode_abkg(img, magic=b"ABKT" if a.variant == "theme" else b"ABKG")
+                if a.variant == "theme":
+                    data = encode_image(img)
+                else:
+                    data = encode_image(img, magic=b"ABKG")
                 print(f"encoded {data[:4].decode()} "
                       f"({'theme image' if a.variant == 'theme' else 'custom image'}) "
                       f"({len(data)} bytes)")
@@ -983,8 +969,10 @@ def main():
                     print("image uploaded")
             elif a.cmd == "video":
                 gif = Image.open(a.src)
-                data = gif_to_anim(gif, a.max_frames,
-                                   magic=b"ANIT" if a.variant == "theme" else b"ANIM")
+                if a.variant == "theme":
+                    data = gif_to_video(gif, a.max_frames)
+                else:
+                    data = gif_to_video(gif, a.max_frames, magic=b"ANIM")
                 print(f"encoded {data[:4].decode()} "
                       f"({'theme animation' if a.variant == 'theme' else 'custom animation'}) "
                       f"({len(data)} bytes)")
@@ -996,7 +984,7 @@ def main():
                     print("animation uploaded")
             elif a.cmd == "slider":
                 files = sorted(a.src)
-                data = album_to_anps(files, a.interval, a.anim, magic=a.format.encode())
+                data = album_to_slider(files, a.interval, a.anim, magic=a.format.encode())
                 print(f"encoded {a.format} ({len(data)} bytes, {len(files)} images)")
                 if a.save:
                     open(a.save, "wb").write(data)

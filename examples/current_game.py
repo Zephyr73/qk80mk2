@@ -52,7 +52,7 @@ def main() -> int:
     if appid is None:
         print("no known game focused; put the game in the foreground and retry")
         return 1
-    data = qk80.encode_abkg(fetch_header(appid))
+    data = qk80.encode_image(fetch_header(appid))
     print(f"game appid {appid}: encoded ABKT ({len(data)} bytes)")
     qk80.upload(data)
     print("shown on the Themes screen")

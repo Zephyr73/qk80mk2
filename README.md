@@ -1,14 +1,25 @@
-# QK80 MK2 screen uploader
+# QK80 MK2 — screen & Matrix LED uploader
 
-Upload images, GIFs and slideshows to the QK80 MK2's 320x172 LCD directly from
-the command line — no browser, no wasm. The same files the official
-configurator (cfg.qwertykeys.com) produces, byte-for-byte, sent over the same
-protocol.
+Upload images, GIFs and slideshows to the QK80 MK2's 320x172 LCD, and control
+its 7x7 Matrix LED — from the command line or from your own Python programs.
+No browser, no wasm: the same files the official configurator
+(cfg.qwertykeys.com) produces, byte-for-byte, sent over the same protocol.
 
-It is also a **small library**: `qk80.py` exposes the encoders and transports,
-so you can build your own Python programs that feed this display — a
-current-game detector, a "now playing" album-art screen, a stats ticker,
-whatever you like. See [Library API](#library-api) and `examples/`.
+## 1. Project vision
+
+A small host-side SDK + CLI for the QK80 MK2. Give it any image and it handles
+the encoding and transport; the library API makes it easy to build "feed this
+display" programs:
+
+* **Current-game detection** — show the Steam header of the game in focus
+  (`examples/current_game.py`)
+* **Now playing** — album art of the track you're listening to
+  (`examples/now_playing.py`)
+* **Stats / uptime tickers** — a dashboard on your desk
+* **Slideshows** — albums, photos, anything
+
+Both displays are covered: the 320x172 LCD (images, animations, sliders) and
+the 7x7 Matrix LED (mode color/brightness/effect + custom 49-LED grid).
 
 ```
 qk80.py image  tests/black.png      # image  -> Themes -> Default Theme
@@ -16,66 +27,38 @@ qk80.py video  tests/anim.gif       # GIF    -> Themes -> Default Theme
 qk80.py slider tests/black.png tests/red.png   # album -> Apps -> Custom Animation
 ```
 
-## The outcome
-
-On the keyboard, uploaded content lands on one of two screens:
-
-| CLI command              | Format | Lands on                          |
-|--------------------------|--------|-----------------------------------|
-| `image` (default)        | ABKT   | **Themes → Default Theme**        |
-| `video` (default)        | ANIT   | **Themes → Default Theme**        |
-| `slider` (default)       | ANPS   | **Apps → Custom Animation**       |
-| `image --variant custom` | ABKG   | Apps → Custom Animation           |
-| `video --variant custom` | ANIM   | Apps → Custom Animation           |
-| `slider --format ANPT`   | ANPT   | Themes → Default Theme            |
-
-The defaults are chosen to match this routing: image/video default to the
-"theme" variants (`ABKT`/`ANIT`, which land on the Themes screen) and slider to
-the "custom" variant (`ANPS`, which lands on Apps → Custom Animation). The
-`--variant` / `--format` flags let you send content to the other screen.
-
-## How it works
-
-1. **Encode** the source into the keyboard's on-disk format. A PNG/GIF/album is
-   scaled to cover 320x172 and converted to raw RGB565, wrapped in a small
-   header whose first four bytes are the *magic* that tells the firmware which
-   screen to use:
-
-   | Magic | Meaning                    |
-   |-------|----------------------------|
-   | `ABKT`| Theme image                |
-   | `ABKG`| Custom image               |
-   | `ANIT`| Theme animation            |
-   | `ANIM`| Custom animation           |
-   | `ANPS`| Custom slider              |
-   | `ANPT`| Theme slider               |
-
-   These files are byte-identical to what the official site's `kbres.wasm`
-   produces (verified: 0 differing bytes for image, video and slider).
-
-2. **Upload** the file over USB CDC (serial @115200, 64-byte packets): a
-   `0xE0` header packet with the first 20 file bytes, then `0xE1` buffer
-   packets carrying 56-byte chunks (flow-controlled per chunk), `0xE2` to
-   cancel. An HID fallback (`0xD1 0x20/0x21`) exists for firmwares without CDC.
-
-The site does exactly the same thing: it sends only the encoded file bytes —
-there is no extra "which screen" command. The screen is decided entirely by the
-4-byte magic, so a byte-identical upload from this tool is indistinguishable
-from one done in the browser.
-
-## Requirements
-
-* Python 3.10+
-* A QK80 MK2 plugged in via USB
-* `cfg.qwertykeys.com` **closed** (it holds the serial port — this tool will
-  fail with a port-open error until you close the browser tab)
+## 2. Quick start
 
 ```powershell
 python -m venv .venv
 .venv\Scripts\pip install -r requirements.txt
+.venv\Scripts\python qk80.py image tests\black.png
 ```
 
-## Usage
+That uploads a black 320x172 image to the Themes screen. Plug in the keyboard
+and the browser configurator must be closed (see Prerequisites).
+
+## 3. Prerequisites
+
+* **Python 3.10+**
+* A **QK80 MK2** plugged in via USB
+* **`cfg.qwertykeys.com` closed** — the browser tab holds the serial port; this
+  tool fails with a port-open error until you close it
+* Works on Windows out of the box. macOS/Linux: same commands, `python3` /
+  `source .venv/bin/activate`, and the serial port shows up as `/dev/ttyACM*`.
+
+## 4. Installation
+
+```powershell
+python -m venv .venv            # create the virtual environment
+.venv\Scripts\pip install -r requirements.txt
+.venv\Scripts\python qk80.py devices   # confirm the keyboard is detected
+```
+
+Dependencies: `Pillow` (image handling), `pyserial` (CDC), `hidapi` (HID
+fallback).
+
+## 5. CLI reference
 
 All commands upload to the keyboard by default. Every command accepts these
 common flags:
@@ -86,7 +69,7 @@ common flags:
 | `--port COMx` | pick a serial port (CDC only; auto-detected by default) |
 | `--save FILE` | also write the encoded file (in addition to uploading) |
 | `--no-upload` | encode only, never touch the keyboard |
-| `--upload` | upload (this is the default; kept for explicitness) |
+| `--upload` | upload (this is the default; mutually exclusive with `--no-upload`) |
 
 > `matrix color` (and the bare-colorname shorthand `matrix cyan`) /
 > `matrix effect` / `matrix brightness` / `matrix get` always use the HID
@@ -143,7 +126,7 @@ Takes any number of image files, sorted by name like the app does.
 | `--anim` | `1` | transition: `1` none, `2` down, `3` up, `4` right, `5` left |
 | `--format` | `ANPS` | `ANPS` = custom slider → Apps → Custom Animation, `ANPT` = theme slider → Themes → Default Theme |
 
-### `matrix` — 7×7 Matrix LED
+### `matrix` — 7x7 Matrix LED
 
 Two independent parts: the **mode settings** (color / brightness / effect,
 which apply to the Letters / Typewriter / Rain modes) and the **Custom grid**
@@ -185,32 +168,7 @@ quantizes hue onto a coarse wheel — `qk80.py` compensates automatically so
 `matrix color cyan` really shows cyan. Brightness below ~16% clamps to the
 hardware floor (the matrix cannot go darker).
 
-## Failsafe (Ctrl+C)
-
-Uploads can be interrupted at any time with `Ctrl+C`. The tool always sends the
-keyboard a **cancel command** (`0xE2` over CDC, `0xD1 0x22` over HID) before
-releasing the serial port, so an interrupted transfer is aborted cleanly and
-**never bricks the device** — the screen simply keeps whatever content was
-last uploaded successfully, and you can retry. Verified: interrupting
-mid-transfer sends `0xE2` and exits with a clear message, no traceback.
-
-## Device identification
-
-The tool matches the QK80 MK2 by its IDs over both transports:
-
-| ID        | Value    |
-|-----------|----------|
-| Vendor ID | `0x514B` (`QK`) |
-| Product ID| `0x4D02` (QK80 MK2) |
-| Firmware  | `0x109`  |
-| HID       | VIA raw endpoint, usage page `0xFF60` |
-| CDC       | USB serial @ 115200 |
-
-`qk80.py devices` lists what the computer actually sees on each bus and flags
-the VIA HID endpoint, so you can confirm the keyboard is detected correctly.
-The same check is used internally by the library via `qk80.probe_devices()`.
-
-## Library API
+## 6. Library API reference
 
 This is the part other projects build on. Import `qk80.py` from your own
 program, feed it any image, and let it handle encoding + transport:
@@ -220,59 +178,127 @@ import qk80
 from PIL import Image
 
 # 1. Encode any image (PNG/JPG/GIF) to a display file
-data = qk80.encode_abkg(Image.open("cover.png"))     # ABKT -> Themes screen
-# data = qk80.encode_anim(frames, durations_ms)       # multi-frame
-# data = qk80.encode_anps(frames, interval, anim)     # slideshow
+data = qk80.encode_image(Image.open("cover.png"))     # ABKT -> Themes screen
 
 # 2. Upload it (auto-detects the serial port; CDC, HID fallback available)
 qk80.upload(data)                                    # Ctrl+C-safe
 ```
 
-Other useful pieces:
+### Encoders
 
-* `qk80.encode_abkg(img, magic=b"ABKT")` / `b"ABKG"` — image (Themes / Apps)
-* `qk80.encode_anim(frames, durations_ms, magic=b"ANIT")` / `b"ANIM"` — video
-* `qk80.encode_anps(frames, interval_sec, anim, magic=b"ANPS")` / `b"ANPT"` — slideshow
-* `qk80.gif_to_anim(gif, max_frames=500, magic=b"ANIM")` — encode a GIF file directly
-* `qk80.album_to_anps(images, interval_sec, anim, magic=b"ANPS")` — encode an image list
-* `qk80.set_matrix_color("cyan")` — Letters / Typewriter / Rain mode color
-  (HID, persists); does NOT touch the Custom grid
-* `qk80.set_matrix_custom("cyan")` / `qk80.set_matrix_pattern(pattern, "red")` /
-  `qk80.reset_matrix()` — 7x7 Matrix LED Custom grid only (solid fill / manual
-  grid / clear); never touches the mode color or effect
-* `qk80.set_matrix_brightness(50)` / `qk80.set_matrix_effect("typewriter")` /
-  `qk80.get_matrix_led()` — mode color/brightness/effect (HID, persists; same as
-  the configurator's Lighting -> MATRIX LED sliders); brightness is 1-100
-* `qk80.MATRIX_COLORS` — the color palette dict (`"red": (255, 0, 0)`, …);
-  `qk80.parse_color(["#ff0000"])` parses a name / hex / `r g b` into `(r, g, b)`;
-  `qk80.hsv256_to_rgb(h, s)` converts the hue/sat the firmware reports to RGB
-* `qk80.encode_tabml(frames, fps, rows, cols)` — Matrix LED frame(s) → `tabml` file bytes
-* `qk80.upload(data, transport="cdc", port=None, progress_cb=...)` — open → send → close
-* `qk80.CDCTransport(port)` / `qk80.HIDTransport()` — low-level transports
-  (`set_tab_file`, `set_matrix_lighting`, `set_matrix_led`, `get_matrix_led`, `cancel`)
-* `qk80.probe_devices()` — structured list of detected QK80 MK2 devices
+| Function | Default | Produces |
+|----------|---------|----------|
+| `encode_image(img, magic=b"ABKT")` | Themes | ABKT / ABKG — single image |
+| `encode_video(frames, durations_ms, magic=b"ANIT")` | Themes | ANIT / ANIM — multi-frame animation |
+| `gif_to_video(gif, max_frames=500, magic=b"ANIT")` | Themes | ANIT / ANIM — encode a GIF directly |
+| `encode_slider(frames, interval_sec, anim, magic=b"ANPS")` | Apps | ANPS / ANPT — slideshow |
+| `album_to_slider(images, interval_sec, anim, max_frames=500, magic=b"ANPS")` | Apps | ANPS / ANPT — encode an image list |
+| `encode_tabml(frames, fps, rows, cols)` | — | `tabml` — Matrix LED file bytes |
+
+Every encoder takes an optional `magic=` to send content to the *other* screen:
+`encode_image(img, magic=b"ABKG")` lands on Apps, `gif_to_video(gif, magic=b"ANIM")`
+on Apps, `encode_slider(frames, 5, 1, magic=b"ANPT")` on Themes.
+
+### Matrix LED helpers
+
+| Function | Effect |
+|----------|--------|
+| `set_matrix_color("cyan")` | Letters / Typewriter / Rain mode color (HID, persists); does NOT touch the Custom grid |
+| `set_matrix_custom("cyan")` | Custom grid solid fill (color name, `#rrggbb`, or `r g b`) |
+| `set_matrix_pattern(pattern, "red")` | Custom grid manual pattern (7 strings of 7 chars, `.` = off) |
+| `reset_matrix()` | Custom grid factory default (all off) |
+| `set_matrix_brightness(50)` | Mode brightness, 1-100 (HID, persists) |
+| `set_matrix_effect("typewriter")` | Mode: off/typewriter/terminal/raindrop/custom |
+| `get_matrix_led()` | `{"brightness": 0-255, "effect": int, "effect_name": str, "color": (hue, sat)}` |
+
+The mode-color helpers never touch the Custom grid, and the grid helpers never
+change the mode color or effect.
+
+### Transports & helpers
+
+* `upload(data, transport="cdc", port=None, progress_cb=...)` — open → send → close
+* `CDCTransport(port)` / `HIDTransport()` — low-level transports; usable as
+  context managers (`with CDCTransport() as t:`)
+* `probe_devices()` — structured list of detected QK80 MK2 devices
+* `parse_color(["#ff0000"])` / `parse_color(["255", "0", "0"])` — color spec → `(r, g, b)`
+* `rgb_to_hsv256(r, g, b)` / `hsv256_to_rgb(h, s, v=255)` — RGB ↔ HSV (0-255)
+* `MATRIX_COLORS` — the color palette dict; `MATRIX_LED_EFFECTS` — mode names
+* `resize_cover(img)` — scale-to-cover 320x172 center crop
 
 The pattern for any "feed this display" program is: **produce an image →
-encode → upload**. See `examples/` for a now-playing and a current-game
-starting point.
+encode → upload**. See [Examples](#7-examples) for starting points.
 
-## Layout
+## 7. Examples
 
-| Path           | Purpose                                             |
-|----------------|-----------------------------------------------------|
-| `qk80.py`      | Encoders, transports and CLI (pure Python, no wasm) |
-| `PROTOCOL.md`  | Reverse-engineered wire protocol + file formats     |
-| `examples/`    | Starting points for building your own feeds         |
-| `tests/`       | Sample media for trying the tool                    |
-| `requirements.txt` | Python dependencies                              |
-| `LICENSE`      | MIT license                                         |
+Both examples are templates — extend them for your own feeds.
 
-## Notes
+**`current_game.py`** — shows the focused game's Steam header on the Themes
+screen (Windows). Maintain a `GAMES` dict of window-title fragment → Steam
+appid, put the game in the foreground, run:
 
-* Protocol and formats were reverse-engineered from the deployed
-  `cfg.qwertykeys.com` bundle and cross-checked with the open-source
-  `tabkb/cc` configurator — details in `PROTOCOL.md`.
-* The routing table above was verified on a physical QK80 MK2. On firmware
-  older than v1.1.0 the magic-based per-screen routing may not exist; if all
-  uploads land on one screen, flash `qk80mk2_master_v1.1.1.uf2` + PLC v1.1.1
-  (both are on the QK80 MK2 product page) via the bootloader.
+```powershell
+.venv\Scripts\python examples\current_game.py
+```
+
+**`now_playing.py`** — shows album art on the Themes screen. Fill in
+`get_cover_url()` with your music player's integration (mpd/mopidy, Spotify,
+etc.), or pass a file/URL directly:
+
+```powershell
+.venv\Scripts\python examples\now_playing.py cover.jpg
+.venv\Scripts\python examples\now_playing.py https://example.com/cover.png
+```
+
+Both are Ctrl+C-safe — the keyboard receives a cancel command.
+
+## 8. Architecture
+
+| Path | Purpose |
+|------|---------|
+| `qk80.py` | Encoders, transports, matrix helpers and CLI (pure Python, no wasm) |
+| `examples/` | Starting points for building your own feeds |
+| `tests/` | Sample media for trying the tool |
+| `requirements.txt` | Python dependencies |
+| `PROTOCOL.md` | Reverse-engineered wire protocol + file formats |
+| `LICENSE` | MIT license |
+
+The pipeline: **encode** (scale → RGB565/HSV → header + magic) → **upload**
+(CDC `0xE0`/`0xE1`/`0xC0`/`0xC1` or HID `0xD1` fallback) → done. The 4-byte
+*magic* in the file header decides which screen the firmware uses; there is no
+extra "which screen" command, so a byte-identical upload from this tool is
+indistinguishable from one done in the browser.
+
+## 9. Troubleshooting / FAQ
+
+**"could not open port"** — `cfg.qwertykeys.com` is open in a browser and holds
+the serial port. Close the tab (or unplug/replug the keyboard), then retry.
+
+**"QK80 MK2 serial port not found"** — the keyboard isn't detected. Plug it in,
+or pass `--port COMx` (`qk80.py devices` shows the port).
+
+**"bad HID echo" / transport errors** — the `hid` transport needs the VIA raw
+endpoint (`usage_page 0xFF60`); `qk80.py devices` flags it.
+
+**Uploads land on the wrong screen** — magic-based per-screen routing needs
+firmware >= v1.1.0. If everything lands on one screen, flash
+`qk80mk2_master_v1.1.1.uf2` + PLC v1.1.1 (both on the QK80 MK2 product page)
+via the bootloader.
+
+**Matrix brightness looks wrong below ~16%** — the firmware clamps to a
+hardware floor; the matrix physically cannot go darker.
+
+**`matrix color cyan` looks blue?** — the firmware quantizes hue onto a coarse
+wheel; `qk80.py` pre-compensates, so it should show cyan. If a custom color
+round-trips oddly, it's the same quantization.
+
+**Ctrl+C mid-upload** — safe. The tool sends a cancel command (`0xE2` / `0xD1
+0x22`) before releasing the port; the screen keeps the last successful upload
+and you can retry. It never bricks the device.
+
+## 10. Protocol reference
+
+The wire protocol and on-disk file formats were reverse-engineered from the
+deployed `cfg.qwertykeys.com` bundle and cross-checked with the open-source
+`tabkb/cc` configurator. See **PROTOCOL.md** for the full low-level details:
+command bytes, packet layouts, magic routing table, and the Matrix LED HID
+subsystem.

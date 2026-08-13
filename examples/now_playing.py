@@ -44,7 +44,7 @@ def load_image(source: str) -> Image.Image:
 def main() -> int:
     src = sys.argv[1] if len(sys.argv) > 1 else get_cover_url()
     img = load_image(src)
-    data = qk80.encode_abkg(img)  # ABKT -> Themes -> Default Theme
+    data = qk80.encode_image(img)  # ABKT -> Themes -> Default Theme
     print(f"encoded ABKT ({len(data)} bytes)")
     qk80.upload(data)
     print("album art shown on the Themes screen")
