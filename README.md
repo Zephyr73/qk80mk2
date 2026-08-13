@@ -295,7 +295,33 @@ round-trips oddly, it's the same quantization.
 0x22`) before releasing the port; the screen keeps the last successful upload
 and you can retry. It never bricks the device.
 
-## 10. Protocol reference
+## 10. Using with another keyboard / forking
+
+Nothing about the *device* is hardcoded. The protocol this tool speaks is the
+one used by the `tabkb/cc` open-source configurator; any board that speaks it
+can be driven by a fork of this repo. To point it at a different board:
+
+* **Different vendor/product IDs** — set `QK80_VID` / `QK80_PID` (hex or
+  decimal) before running, or edit `VENDOR_ID` / `PRODUCT_ID` at the top of
+  `qk80.py`:
+
+  ```powershell
+  $env:QK80_VID = "0x514B"; $env:QK80_PID = "0x4D02"
+  .venv\Scripts\python qk80.py devices
+  ```
+
+* **Different product name in messages** — `QK80_NAME` env var or the
+  `DEVICE_NAME` constant.
+
+* **Detection** — `qk80.py devices` lists the CDC port and every HID interface
+  of your device; the HID transport needs the VIA raw endpoint
+  (`usage_page 0xFF60`, flagged `<-- VIA raw (HID transport)`). Boards whose
+  firmware is based on the same `tabkb/cc` code will have it.
+
+* **Screen size / layout** — `SCREEN_W` / `SCREEN_H` at the top of `qk80.py`
+  scale images to the panel; change them for a different resolution.
+
+## 11. Protocol reference
 
 The wire protocol and on-disk file formats were reverse-engineered from the
 deployed `cfg.qwertykeys.com` bundle and cross-checked with the open-source

@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# Environment / secrets
+.env
+.env.*
+
+# Generated upload files (qk80.py --save)
+*.tabml
+*.abkt
+*.abkg
+*.anit
+*.anim
+*.anps
+*.anpt
+
+# Logs
+*.log
+
+# Editors / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db

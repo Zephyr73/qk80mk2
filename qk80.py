@@ -24,6 +24,7 @@ Transports:
 from __future__ import annotations
 
 import colorsys
+import os
 import struct
 import time
 from dataclasses import dataclass
@@ -31,8 +32,29 @@ from typing import Callable, List, Optional, Sequence, Union
 
 from PIL import Image
 
-VENDOR_ID = 0x514B
-PRODUCT_ID = 0x4D02
+
+def _env_int_hex(name: str, default: int) -> int:
+    """Read a hex-or-decimal int from an env var, else return ``default``.
+
+    Lets a fork target another board without editing this file, e.g.
+    ``QK80_VID=0x514B`` / ``QK80_PID=0x4D02``.
+    """
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        return int(raw, 0)
+    except ValueError:
+        raise RuntimeError(f"invalid {name} environment variable {raw!r}; "
+                           f"use hex like 0x514B or decimal") from None
+
+
+# Device identity. Override with the QK80_VID / QK80_PID / QK80_NAME
+# environment variables (e.g. QK80_VID=0x514B) or edit here for a fork.
+VENDOR_ID = _env_int_hex("QK80_VID", 0x514B)
+PRODUCT_ID = _env_int_hex("QK80_PID", 0x4D02)
+DEVICE_NAME = os.environ.get("QK80_NAME", "QK80 MK2")
+VIA_USAGE_PAGE = 0xFF60
 
 SCREEN_W = 320
 SCREEN_H = 172
@@ -382,7 +404,7 @@ class Progress:
 
 
 class CDCTransport:
-    """QK80 MK2 tab-file / matrix transport over the USB CDC serial port."""
+    """Tab-file / matrix transport over the USB CDC serial port."""
 
     def __init__(self, port: Optional[str] = None):
         self.port_name = port
@@ -400,7 +422,8 @@ class CDCTransport:
                     break
             if not self.port_name:
                 raise RuntimeError(
-                    "QK80 MK2 serial port not found (VID/PID 0x514B/0x4D02). "
+                    f"{DEVICE_NAME} serial port not found "
+                    f"(VID/PID 0x{VENDOR_ID:04X}/0x{PRODUCT_ID:04X}). "
                     "Pass --port COMx."
                 )
         self.ser = serial.Serial(self.port_name, BAUD, timeout=2, write_timeout=2)
@@ -505,11 +528,12 @@ class HIDTransport:
         import hid
 
         for d in hid.enumerate(VENDOR_ID, PRODUCT_ID):
-            if d.get("usage_page") == 0xFF60:
+            if d.get("usage_page") == VIA_USAGE_PAGE:
                 self.path = d["path"]
                 break
         if not self.path:
-            raise RuntimeError("QK80 MK2 VIA HID endpoint not found (0xFF60)")
+            raise RuntimeError(f"{DEVICE_NAME} VIA HID endpoint not found "
+                               f"(usage page 0x{VIA_USAGE_PAGE:04X})")
         self.device = hid.device()
         self.device.open_path(self.path)
 
@@ -794,12 +818,12 @@ def get_matrix_led(port: Optional[str] = None) -> dict:
 
 
 def probe_devices() -> dict:
-    """Enumerate connected QK80 MK2 devices over CDC (serial) and HID.
+    """Enumerate connected devices over CDC (serial) and HID.
 
-    Returns ``{"cdc": [...], "hid": [...]}`` for anything matching the QK80
-    MK2 IDs (VID 0x514B / PID 0x4D02), so callers can confirm the device is
-    present and decide which transport to use. Both lists are empty when the
-    keyboard is not connected.
+    Returns ``{"cdc": [...], "hid": [...]}`` for anything matching
+    :data:`VENDOR_ID` / :data:`PRODUCT_ID`, so callers can confirm the device
+    is present and decide which transport to use. Both lists are empty when
+    the keyboard is not connected.
     """
     from serial.tools import list_ports
 
@@ -835,7 +859,7 @@ def probe_devices() -> dict:
 # --------------------------------------------------------------------------
 
 def _show_devices() -> None:
-    print(f"QK80 MK2 detection (VID 0x{VENDOR_ID:04X}, PID 0x{PRODUCT_ID:04X}):")
+    print(f"{DEVICE_NAME} detection (VID 0x{VENDOR_ID:04X}, PID 0x{PRODUCT_ID:04X}):")
     try:
         dev = probe_devices()
     except ImportError as e:
@@ -862,7 +886,7 @@ def _show_devices() -> None:
 def main():
     import argparse
 
-    ap = argparse.ArgumentParser(description="QK80 MK2 LCD / Matrix LED tool")
+    ap = argparse.ArgumentParser(description=f"{DEVICE_NAME} LCD / Matrix LED tool")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     def add_common(p):
@@ -932,14 +956,32 @@ def main():
                                "screen), ANPT=theme slider (Themes screen)")
     add_common(p_slider)
 
-    sub.add_parser("devices", help="list detected QK80 MK2 devices (CDC + HID)")
+    sub.add_parser("devices", help=f"list detected {DEVICE_NAME} devices (CDC + HID)")
 
     a = ap.parse_args()
 
     def _cli_upload(transport, data: bytes) -> None:
-        progress = Progress(callback=lambda d, t: print(f"  {d}/{t} bytes"))
-        progress.total = len(data)
-        transport.set_tab_file(data, progress)
+        total = len(data)
+        last_pct = -1
+        start = time.monotonic()
+
+        def on_progress(done, total):
+            nonlocal last_pct
+            pct = round(done * 100 / total)
+            if pct != last_pct:  # redraw only when the % changes
+                last_pct = pct
+                print(f"\r  [{'#' * (pct // 2):<50}] {pct:3d}%  "
+                      f"{done:,}/{total:,} bytes", end="", flush=True)
+
+        try:
+            progress = Progress(callback=on_progress)
+            progress.total = total
+            transport.set_tab_file(data, progress)
+            print(f"\r  [{'#' * 50}] 100%  {total:,}/{total:,} bytes  "
+                  f"({time.monotonic() - start:.1f}s)")
+        except BaseException:
+            print()
+            raise
 
     transport = None
     try:
