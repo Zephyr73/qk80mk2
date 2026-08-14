@@ -18,6 +18,8 @@ Transports:
       file:      [0xD1,0x20,first20] then [0xD1,0x21,off(4BE),len,chunk<=25], cancel [0xD1,0x22]
       matrix:    [0xD1,0x30,frames,fps,rows,cols] then [0xD1,0x31,off(4BE),len,chunk<=25]
       lighting:  [0x07/0x08/0x09, 26, value, ...] - matrix-LED brightness/effect/color
+      clock:     [0x07, 25, ts(4BE)] + [0x09, 25] - Date & Time sync
+      features:  [0x07/0x08/0x09, 17, option, value] - Light Power / Sleep Mode
 
 Modules:
   qk80.constants  - device identity + wire-protocol constants
@@ -35,14 +37,20 @@ exactly like the previous single-file ``qk80.py`` module.
 from __future__ import annotations
 
 from .api import (
+    get_light_power,
     get_matrix_led,
+    get_sleep_mode,
+    parse_sleep_mode,
     probe_devices,
     reset_matrix,
+    set_light_power,
     set_matrix_brightness,
     set_matrix_color,
     set_matrix_custom,
     set_matrix_effect,
     set_matrix_pattern,
+    set_sleep_mode,
+    sync_time,
     upload,
 )
 from .cli import main
@@ -62,6 +70,9 @@ from .constants import (
     CDC_MATRIX_INFO,
     DEVICE_NAME,
     ERR_FLAG,
+    FEATURES_CHANNEL,
+    FEATURES_VALUE_LIGHT_POWER,
+    FEATURES_VALUE_SLEEP_MODE,
     HID_BLOCK_FILE_BUFFER,
     HID_BLOCK_FILE_CANCEL,
     HID_BLOCK_FILE_INFO,
@@ -83,6 +94,8 @@ from .constants import (
     PRODUCT_ID,
     SCREEN_H,
     SCREEN_W,
+    SLEEP_MODES,
+    TIME_SYNC_CHANNEL,
     VENDOR_ID,
     VIA_USAGE_PAGE,
 )

@@ -77,7 +77,8 @@ def encode_video(frames: list[Image.Image], durations_ms: list[int],
     """
     if not frames:
         raise ValueError("no frames")
-    assert len(frames) == len(durations_ms), "frames/durations length mismatch"
+    if len(frames) != len(durations_ms):
+        raise ValueError("frames/durations length mismatch")
     n = len(frames)
     encoded = [to_rgb565(resize_cover(f)) for f in frames]  # encode once
     header_size = 20 + 2 * n

@@ -27,7 +27,8 @@ run the CLI with `python -m qk80`.
 The keyboard exposes **two** USB interfaces:
 
 1. **VIA raw HID** – usage page `0xFF60`, usage `0x61`. Handles keymap, macro,
-   encoder, backlight (VIA-style), actuation (`0xD0`) and tab-block uploads.
+   encoder, backlight (VIA-style), actuation (`0xD0`), date/time sync,
+   Config -> Features (light power / sleep mode) and tab-block uploads.
 2. **USB CDC (serial)** – 115200 baud, 64-byte packets. Used by the
    configurator for **tab files** (LCD image/animation, matrix lighting,
    firmware) when the device declares CDC support.
@@ -183,6 +184,44 @@ cycle.
 These commands apply to the Letters / Typewriter / Rain modes. The Custom
 mode's grid is set separately via the matrix transfer (CDC `0xC0`/`0xC1` or
 HID `0xD1 0x30`/`0x31`) — see below.
+
+### Date & Time sync (`0x07`/`0x09`, subsystem 25)
+
+The configurator's `Config -> Date and Time -> Time Sync` button (`TimeSyncItem`
+in the deployed bundle) sends two HID commands:
+
+| Cmd  | Payload                                | Meaning |
+|------|----------------------------------------|---------|
+| `0x07` | `[0x07, 0x19, t0, t1, t2, t3]`      | set clock to Unix timestamp `t` (4 bytes BE) |
+| `0x09` | `[0x09, 0x19]`                       | persist subsystem 25 (survives power cycle) |
+
+The timestamp is the **local wall-clock time as Unix seconds** — the app
+computes `floor(Date.now()/1000) - Date.getTimezoneOffset()*60` — because the
+firmware clock has no timezone handling and displays the value it is given
+directly. There is no read-back (`0x08` is never used for subsystem 25).
+
+Same command path as the matrix-LED values above (VIA `0x07`/`0x09` over the
+HID endpoint, regardless of CDC support), so it works with the identical
+`_send` echo logic in `qk80/transport.py`'s `HIDTransport.sync_time`.
+
+### Config -> Features (`0x07`/`0x08`/`0x09`, subsystem 17)
+
+The QK80 MK2 definition (`def_qk80mk2.json`) lists a `Config -> Features`
+menu backed by VIA custom-value subsystem `0x11` (17). Each control is an
+`(option, value)` pair sent with the same `0x07`-set / `0x09`-save pattern as
+subsystems 25/26; unlike time sync there **is** a read-back (`0x08`):
+
+| Option | Control      | Set (`0x07`)                    | Get (`0x08`) returns   |
+|--------|--------------|---------------------------------|------------------------|
+| `0x01` | Light Power  | `[0x07, 0x11, 0x01, 0|1]`       | `[0x08, 0x11, 0x01, 0|1]` |
+| `0x02` | Sleep Mode   | `[0x07, 0x11, 0x02, index]`     | `[0x08, 0x11, 0x02, index]` |
+
+Sleep Mode index: `0` Disable, `1` 5 min, `2` 15 min, `3` 30 min, `4` 1 h,
+`5` 3 h, `6` 6 h. Light Power is a toggle: `1` = on, `0` = off.
+
+Both persist with `[0x09, 0x11]` (`CUSTOM_SAVE` for subsystem 17), the same as
+the matrix-LED values and the clock. (The same subsystem also carries Debounce
+Mode `0x06` / Debounce Delay `0x07`, not implemented here.)
 
 
 **Firmware:**

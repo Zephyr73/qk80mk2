@@ -1,17 +1,19 @@
 """Command-line interface for the QK80 MK2 tool (``python -m qk80``).
 
 Subcommands mirror the configurator's screens and the matrix-LED lighting
-controls. For the full command reference see README.md, sections 5-7.
+controls. For the full command reference see README.md, section 6 (CLI) and
+section 7 (library API).
 """
 
 from __future__ import annotations
 
 import argparse
 import time
+from datetime import datetime
 
 from PIL import Image
 
-from .api import probe_devices
+from .api import parse_sleep_mode, probe_devices
 from .constants import (
     ANIM_TRANS_NONE,
     DEVICE_NAME,
@@ -19,6 +21,7 @@ from .constants import (
     MATRIX_LED_EFFECTS,
     MATRIX_ROWS,
     PRODUCT_ID,
+    SLEEP_MODES,
     VENDOR_ID,
 )
 from .encoders import (
@@ -135,6 +138,31 @@ def main():
                                "screen), ANPT=theme slider (Themes screen)")
     add_common(p_slider)
 
+    p_time = sub.add_parser(
+        "time",
+        help="sync the on-screen clock (Config -> Date and Time -> time sync, HID)")
+    p_time.add_argument("action", nargs="?", default="sync",
+                        choices=["sync", "set"],
+                        help="'sync' uses the host's current local time (default); "
+                             "'set' uses the given wall-clock time")
+    p_time.add_argument("value", nargs="?", default=None,
+                        help="for 'set': an ISO date-time like '2026-08-14 14:30:00'")
+
+    p_lights = sub.add_parser(
+        "lights",
+        help="all-LED power on/off (Config -> Features -> Light Power, HID)")
+    p_lights.add_argument("action", nargs="?", default="get",
+                          choices=["on", "off", "get"],
+                          help="'on'/'off' toggle the LED power; 'get' prints the "
+                               "current state (default)")
+
+    p_sleep = sub.add_parser(
+        "sleep",
+        help="sleep-mode timer (Config -> Features -> Sleep Mode, HID)")
+    p_sleep.add_argument("value", nargs="?", default=None,
+                         help="disable / 5min / 15min / 30min / 1h / 3h / 6h "
+                              "(or an index 0-6); omit to print the current mode")
+
     sub.add_parser("devices", help=f"list detected {DEVICE_NAME} devices (CDC + HID)")
 
     a = ap.parse_args()
@@ -176,6 +204,8 @@ def main():
                 transport = HIDTransport()  # Lighting -> MATRIX LED lives on HID
             elif not getattr(a, "no_upload", False):
                 transport = CDCTransport(a.port) if a.transport == "cdc" else HIDTransport()
+        elif a.cmd in ("time", "lights", "sleep"):
+            transport = HIDTransport()  # VIA custom values live on HID, like matrix LED
         elif a.cmd != "devices" and not getattr(a, "no_upload", False):
             transport = CDCTransport(a.port) if a.transport == "cdc" else HIDTransport()
         if transport:
@@ -294,6 +324,37 @@ def main():
                         print(f"matrix LEDs: {label}")
                     else:
                         print(f"matrix LEDs: {label} (encode only, not uploaded)")
+            elif a.cmd == "time":
+                if a.action == "set":
+                    if not a.value:
+                        raise RuntimeError(
+                            "time set needs an ISO date-time like '2026-08-14 14:30:00'")
+                    when = datetime.fromisoformat(a.value.replace(" ", "T"))
+                    shown = when.strftime("%Y-%m-%d %H:%M:%S")
+                else:
+                    when = None
+                    shown = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                transport.sync_time(when)
+                print(f"time: keyboard clock set to {shown} "
+                      f"(Config -> Date and Time -> time sync)")
+            elif a.cmd == "lights":
+                if a.action == "get":
+                    state = transport.get_light_power()
+                    print(f"light power: {'on' if state else 'off'}")
+                else:
+                    transport.set_light_power(a.action == "on")
+                    print(f"light power: {a.action} "
+                          f"(Config -> Features -> Light Power)")
+            elif a.cmd == "sleep":
+                if a.value is None:
+                    n = transport.get_sleep_mode()
+                    label = SLEEP_MODES[n][1] if 0 <= n < len(SLEEP_MODES) else "?"
+                    print(f"sleep mode: {label}")
+                else:
+                    n = parse_sleep_mode(a.value)
+                    transport.set_sleep_mode(n)
+                    print(f"sleep mode: {SLEEP_MODES[n][1]} "
+                          f"(Config -> Features -> Sleep Mode)")
             ok = True
         finally:
             if transport and not ok:

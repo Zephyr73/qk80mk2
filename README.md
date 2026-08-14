@@ -149,9 +149,17 @@ The general pattern for any "feed this display" program is: **produce an image
 
 ## 6. CLI reference
 
-All commands upload to the keyboard by default. After installation you can call
-the tool either as `qk80 ...` or `python -m qk80 ...`. Every command accepts
-these common flags:
+Two kinds of subcommands:
+
+* **Upload commands** — `image`, `video`, `slider`, and the Custom-grid form of
+  `matrix` — encode a file and upload it to the keyboard (upload is the
+  default). These accept the common flags below.
+* **Control commands** — `matrix color/brightness/effect/get`, `time`, `lights`,
+  `sleep`, `devices` — read or change device settings over HID (or just list
+  devices). They take no upload flags.
+
+After installation you can call the tool either as `qk80 ...` or
+`python -m qk80 ...`. The upload commands accept these common flags:
 
 | Flag | Meaning |
 |------|---------|
@@ -162,8 +170,8 @@ these common flags:
 | `--upload` | upload (this is the default; mutually exclusive with `--no-upload`) |
 
 > `matrix color` (and the bare-colorname shorthand `matrix cyan`) /
-> `matrix effect` / `matrix brightness` / `matrix get` always use the HID
-> transport — `--transport` is ignored for them.
+> `matrix effect` / `matrix brightness` / `matrix get`, like `time` / `lights`
+> / `sleep`, are HID commands — `--transport` is ignored for them.
 
 ### `devices` — what the computer sees
 
@@ -258,6 +266,47 @@ quantizes hue onto a coarse wheel — the tool compensates automatically so
 `matrix color cyan` really shows cyan. Brightness below ~16% clamps to the
 hardware floor (the matrix cannot go darker).
 
+### `time` — sync the on-screen clock
+
+Sets the keyboard's clock (the configurator's `Config -> Date and Time ->
+Time Sync`, over HID). The clock has no timezone handling, so the value sent
+is the wall-clock time you want it to display:
+
+```powershell
+.venv\Scripts\python -m qk80 time sync                  # host's current local time
+.venv\Scripts\python -m qk80 time set "2026-08-14 14:30:00"   # manual wall-clock time
+```
+
+`sync` is byte-identical to the app's Time Sync button. The value persists
+across power cycles.
+
+### `lights` — all-LED power
+
+The configurator's `Config -> Features -> Light Power` toggle, over HID:
+
+```powershell
+.venv\Scripts\python -m qk80 lights on      # LEDs on
+.venv\Scripts\python -m qk80 lights off     # all LEDs off
+.venv\Scripts\python -m qk80 lights get     # current state
+```
+
+Persists across power cycles.
+
+### `sleep` — sleep-mode timer
+
+The configurator's `Config -> Features -> Sleep Mode` dropdown, over HID.
+Options: `disable`, `5min`, `15min`, `30min`, `1h`, `3h`, `6h` (or an index
+`0`-`6`):
+
+```powershell
+.venv\Scripts\python -m qk80 sleep               # current mode (e.g. "5 minutes")
+.venv\Scripts\python -m qk80 sleep 30min         # set 30 minutes
+.venv\Scripts\python -m qk80 sleep 1h            # set 1 hour
+.venv\Scripts\python -m qk80 sleep disable       # never sleep
+```
+
+Persists across power cycles.
+
 ## 7. Library API reference
 
 This is the part other projects build on. Import the `qk80` package from your
@@ -313,6 +362,7 @@ uploads or embedding the payloads in your own files):
 | `matrix_pattern_rgb(pattern, "red")` | 7×7 char pattern → list of 49 RGB pixels |
 | `matrix_pattern_hsv(pattern, "red")` | 7×7 char pattern → HSV upload bytes |
 | `MATRIX_HUE_STEPS` | the firmware's coarse hue wheel (see the note in the CLI `matrix` section) |
+| `_hue_to_stored(h)` | pre-compensate a hue byte so the firmware stores it faithfully |
 
 The mode-color helpers never touch the Custom grid, and the grid helpers never
 change the mode color or effect.
@@ -326,6 +376,18 @@ change the mode color or effect.
   (used on Ctrl+C / errors so the keyboard never gets stuck)
 * `HIDTransport().set_matrix_led(brightness=, effect=, color=(hue, sat))` — the
   raw HID 0x07 call behind the mode-color helpers (values persist)
+* `sync_time()` / `HIDTransport().sync_time(when=None)` — the configurator's
+  `Config -> Date and Time -> Time Sync` (HID, persists across power cycles).
+  `None` = the host's current local time; a `datetime` = that wall-clock
+  moment (naive = local time); a number = UTC epoch seconds
+* `set_light_power(on)` / `get_light_power()` — the `Config -> Features ->
+  Light Power` toggle (HID, persists)
+* `set_sleep_mode(mode)` / `get_sleep_mode()` — the `Config -> Features ->
+  Sleep Mode` dropdown (HID, persists). `get_sleep_mode()` returns the index
+  `0`-`6` into `SLEEP_MODES`
+* `parse_sleep_mode("30min")` — map a duration/name to the sleep-mode index:
+  `"disable"`, `"5min"`, `"15min"`, `"30min"`, `"1h"`, `"3h"`, `"6h"` (or a
+  bare `0`-`6` index). Used by `set_sleep_mode`; raises `ValueError` on bad input
 * `probe_devices()` — structured list of detected QK80 MK2 devices
 * `parse_color(["#ff0000"])` / `parse_color(["255", "0", "0"])` — color spec → `(r, g, b)`
 * `rgb_to_hsv256(r, g, b)` / `hsv256_to_rgb(h, s, v=255)` — RGB ↔ HSV (0-255)
@@ -338,7 +400,6 @@ Progress example:
 
 ```python
 import qk80
-from PIL import Image
 
 def on_progress(done, total):
     print(f"\r{done * 100 // total}%", end="")
@@ -362,6 +423,9 @@ fork can change the board it targets without touching logic:
 | `ANIM_TRANS_NONE` / `_DOWN` / `_UP` / `_RIGHT` / `_LEFT` | `1..5` | slider transition enum |
 | `MATRIX_LED_EFFECTS` | `("off", "typewriter", "terminal", "raindrop", "custom")` | matrix mode names |
 | `MATRIX_LED_CHANNEL` | `26` | VIA Lighting → MATRIX LED subsystem |
+| `TIME_SYNC_CHANNEL` | `25` | VIA Config → Date and Time sync subsystem |
+| `FEATURES_CHANNEL` | `17` | VIA Config → Features subsystem (Light Power / Sleep Mode) |
+| `SLEEP_MODES` | `(0, "Disable") ... (6, "6 hours")` | sleep-mode dropdown labels |
 | `BAUD` / `CDC_CHUNK` / `HID_CHUNK` | `115200` / `56` / `25` | transport framing |
 
 The protocol constants (command bytes `0xC0/0xC1/0xE0/0xE1/0xE2`, `0xD1` blocks,
@@ -400,8 +464,8 @@ Both are Ctrl+C-safe — the keyboard receives a cancel command.
 |------|---------|
 | `qk80/` | The library package: `constants` (protocol), `encoders` (byte formats), `matrix` (7x7 helpers), `transport` (CDC/HID), `api` (high-level), `cli` (`python -m qk80`) |
 | `examples/` | Starting points for building your own feeds |
-| `tests/` | Sample media for trying the tool |
-| `pyproject.toml` / `uv.lock` | Installable package (`hatchling`): deps, the `qk80` console entry point, locked versions (`uv`) |
+| `tests/` | Sample media + plain-assert regression tests (`test_encoders.py` / `test_time.py` / `test_features.py`) |
+| `pyproject.toml` / `uv.lock` | Project metadata + locked dependencies (`uv`) |
 | `PROTOCOL.md` | Reverse-engineered wire protocol + file formats |
 | `LICENSE` | MIT license |
 
@@ -410,6 +474,10 @@ The pipeline: **encode** (scale → RGB565/HSV → header + magic) → **upload*
 *magic* in the file header decides which screen the firmware uses; there is no
 extra "which screen" command, so a byte-identical upload from this tool is
 indistinguishable from one done in the browser.
+
+Device *settings* are a separate path: they go over the HID VIA custom-value
+commands `0x07`/`0x08`/`0x09` (matrix LED, `time`, `lights`, `sleep`), and the
+app-level `time`/`lights`/`sleep` CLI commands are thin wrappers around them.
 
 ## 10. Troubleshooting / FAQ
 

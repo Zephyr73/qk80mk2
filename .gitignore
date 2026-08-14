@@ -40,8 +40,10 @@ TODO.md
 
 # Logs
 *.log
-TODO.md
-graphify-out/
+
+# Personal scratch / experiments (not for the public repo)
+test.py
+stats/
 
 # Firmware reverse-engineering (raw binaries + tooling; don't commit)
 firmware/

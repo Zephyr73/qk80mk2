@@ -80,4 +80,27 @@ MATRIX_LED_VALUE_EFFECT = 2
 MATRIX_LED_VALUE_COLOR = 4
 MATRIX_LED_EFFECTS = ("off", "typewriter", "terminal", "raindrop", "custom")
 
+# VIA Config -> Date and Time -> time sync (HID custom-value subsystem, same
+# command path as the matrix-LED values). Subsystem 25 receives a big-endian
+# 4-byte Unix timestamp in LOCAL wall-clock seconds; 0x09 persists it. These
+# are the exact bytes the configurator's TimeSyncItem sends.
+TIME_SYNC_CHANNEL = 25
+
+# VIA Config -> Features (HID custom-value subsystem 17). Light Power is a
+# toggle (option 1, 1 = on / 0 = off); Sleep Mode is a dropdown (option 2,
+# see SLEEP_MODES). Both are sent with 0x07 custom-set then 0x09 custom-save,
+# exactly like the matrix-LED and Date & Time subsystems above.
+FEATURES_CHANNEL = 17
+FEATURES_VALUE_LIGHT_POWER = 1
+FEATURES_VALUE_SLEEP_MODE = 2
+SLEEP_MODES = (
+    (0, "Disable"),
+    (1, "5 minutes"),
+    (2, "15 minutes"),
+    (3, "30 minutes"),
+    (4, "1 hour"),
+    (5, "3 hours"),
+    (6, "6 hours"),
+)
+
 ERR_FLAG = 0xEE

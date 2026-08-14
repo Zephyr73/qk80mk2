@@ -14,6 +14,7 @@ from __future__ import annotations
 import struct
 import time
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Callable, Sequence
 
 from .constants import (
@@ -27,6 +28,9 @@ from .constants import (
     CDC_MATRIX_INFO,
     DEVICE_NAME,
     ERR_FLAG,
+    FEATURES_CHANNEL,
+    FEATURES_VALUE_LIGHT_POWER,
+    FEATURES_VALUE_SLEEP_MODE,
     HID_BLOCK_FILE_BUFFER,
     HID_BLOCK_FILE_CANCEL,
     HID_BLOCK_FILE_INFO,
@@ -44,6 +48,8 @@ from .constants import (
     MATRIX_LED_VALUE_COLOR,
     MATRIX_LED_VALUE_EFFECT,
     PRODUCT_ID,
+    SLEEP_MODES,
+    TIME_SYNC_CHANNEL,
     VENDOR_ID,
     VIA_USAGE_PAGE,
 )
@@ -52,6 +58,33 @@ from .matrix import _hue_to_stored
 
 def be32(value: int) -> bytes:
     return struct.pack(">I", value & 0xFFFFFFFF)
+
+
+def _tz_offset_seconds() -> int:
+    return int(datetime.now().astimezone().utcoffset().total_seconds())
+
+
+def _wall_seconds(when=None) -> int:
+    """Epoch seconds of the wall-clock time the keyboard should display.
+
+    The QK80 MK2 clock has no timezone handling - it shows whatever wall-clock
+    value it is given, so the value sent is the desired wall-clock read encoded
+    as if it were UTC. This is byte-identical to the configurator's Time Sync
+    button: ``floor(Date.now()/1000) - Date.getTimezoneOffset()*60`` (= UTC
+    epoch seconds + the local timezone offset). ``when`` may be:
+
+    * ``None`` - the host's current local time
+    * a :class:`datetime.datetime` - that wall-clock read; naive = taken
+      verbatim, tz-aware = converted to the local timezone first
+    * a number - UTC epoch seconds, converted to the local timezone
+    """
+    if when is None:
+        return int(time.time()) + _tz_offset_seconds()
+    if isinstance(when, datetime):
+        if when.tzinfo is None:
+            return int(when.replace(tzinfo=timezone.utc).timestamp())
+        return int(when.astimezone().timestamp()) + _tz_offset_seconds()
+    return int(when) + _tz_offset_seconds()
 
 
 @dataclass
@@ -337,3 +370,65 @@ class HIDTransport:
             "effect_name": MATRIX_LED_EFFECTS[effect] if effect < len(MATRIX_LED_EFFECTS) else "?",
             "color": (co[3], co[4]),
         }
+
+    def sync_time(self, when=None) -> None:
+        """Sync the on-screen clock (Config -> Date and Time -> time sync).
+
+        Sends the exact bytes the configurator's Time Sync button sends, so the
+        firmware shows the same wall-clock time the host displays:
+
+        1. ``0x07`` custom-set on subsystem
+           :data:`qk80.constants.TIME_SYNC_CHANNEL` (25) with the big-endian
+           4-byte Unix timestamp of the desired wall-clock time;
+        2. ``0x09`` custom-save on the same subsystem so the clock survives a
+           power cycle.
+
+        ``when`` is passed to :func:`_wall_seconds` - ``None`` uses the host's
+        current local time, a ``datetime`` sets a specific wall-clock time, a
+        number is UTC epoch seconds. This is a VIA-style command and always
+        goes over the HID endpoint (the same path the app uses), regardless of
+        CDC support.
+        """
+        self._send(HID_CUSTOM_SET,
+                   bytes([TIME_SYNC_CHANNEL]) + be32(_wall_seconds(when)))
+        self._send(HID_CUSTOM_SAVE, bytes([TIME_SYNC_CHANNEL]))
+
+    def set_light_power(self, on: bool) -> None:
+        """Turn all LED power on/off (Config -> Features -> Light Power).
+
+        The configurator's Light Power toggle sets VIA custom-value option 1
+        on subsystem :data:`qk80.constants.FEATURES_CHANNEL` (17) to 1 (on) or
+        0 (off), then commits it with 0x09 so it survives a power cycle. The
+        same bytes are sent here (HID).
+        """
+        self._send(HID_CUSTOM_SET, bytes([FEATURES_CHANNEL,
+                                          FEATURES_VALUE_LIGHT_POWER,
+                                          1 if on else 0]))
+        self._send(HID_CUSTOM_SAVE, bytes([FEATURES_CHANNEL]))
+
+    def get_light_power(self) -> bool:
+        """Read the current LED power state (HID 0x08, subsystem 17, option 1)."""
+        resp = self._send(HID_CUSTOM_GET,
+                          bytes([FEATURES_CHANNEL, FEATURES_VALUE_LIGHT_POWER]))
+        return bool(resp[3])
+
+    def set_sleep_mode(self, mode: int) -> None:
+        """Set the sleep-mode timer (Config -> Features -> Sleep Mode).
+
+        ``mode`` is an index from :data:`qk80.constants.SLEEP_MODES` - 0 =
+        Disable, 1 = 5 min, 2 = 15 min, 3 = 30 min, 4 = 1 h, 5 = 3 h, 6 =
+        6 h. Sent as VIA custom-value option 2 on subsystem 17, committed with
+        0x09 (HID) - the same bytes the configurator's dropdown sends.
+        """
+        mode = int(mode)
+        if not 0 <= mode < len(SLEEP_MODES):
+            raise ValueError(f"sleep mode must be 0-{len(SLEEP_MODES) - 1}")
+        self._send(HID_CUSTOM_SET, bytes([FEATURES_CHANNEL,
+                                          FEATURES_VALUE_SLEEP_MODE, mode]))
+        self._send(HID_CUSTOM_SAVE, bytes([FEATURES_CHANNEL]))
+
+    def get_sleep_mode(self) -> int:
+        """Read the current sleep-mode index (HID 0x08, subsystem 17, option 2)."""
+        resp = self._send(HID_CUSTOM_GET,
+                          bytes([FEATURES_CHANNEL, FEATURES_VALUE_SLEEP_MODE]))
+        return resp[3]

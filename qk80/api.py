@@ -16,7 +16,12 @@ from typing import Callable, Sequence
 
 from PIL import Image
 
-from .constants import MATRIX_COLS, MATRIX_ROWS, PRODUCT_ID, VENDOR_ID
+from .constants import (
+    MATRIX_COLS,
+    MATRIX_ROWS,
+    PRODUCT_ID,
+    VENDOR_ID,
+)
 from .encoders import rgb_to_hsv256
 from .matrix import (
     MATRIX_COLOR_NAMES,
@@ -138,6 +143,92 @@ def get_matrix_led(port: str | None = None) -> dict:
     """
     with HIDTransport() as t:
         return t.get_matrix_led()
+
+
+def sync_time(when=None) -> None:
+    """Sync the on-screen clock to the host (Config -> Date and Time -> time sync).
+
+    The keyboard's clock has no timezone handling, so this sends the local
+    wall-clock read of ``when`` and persists it (survives power cycles), using
+    the same bytes as the configurator's Time Sync button. ``when`` is
+    optional: ``None`` = the host's current local time; a ``datetime`` = that
+    wall-clock moment (naive = local); a number = UTC epoch seconds. See
+    :meth:`qk80.transport.HIDTransport.sync_time` for details.
+    """
+    with HIDTransport() as t:
+        t.sync_time(when)
+
+
+def parse_sleep_mode(value) -> int:
+    """Map a human sleep-mode value to its firmware index (0-6).
+
+    Accepts an index (``0``-``6``), an exact duration (``"5min"``,
+    ``"15 minutes"``, ``"1h"``, ``"3 hours"``, ``"6h"``), or ``"disable"`` /
+    ``"off"``. Returns the index used by :func:`set_sleep_mode` and
+    :data:`qk80.constants.SLEEP_MODES`; raises ``ValueError`` for anything
+    else.
+    """
+    import re
+
+    if isinstance(value, bool):
+        raise ValueError("sleep mode must be an index or duration, not a bool")
+    if isinstance(value, int):
+        n = value
+    else:
+        s = str(value).strip().lower()
+        if s in ("disable", "disabled", "off", "never", "none"):
+            n = 0
+        else:
+            m = re.fullmatch(r"(\d+)\s*(min(?:ute)?s?|m|h(?:ours?)?)?", s)
+            if not m:
+                raise ValueError(
+                    f"unknown sleep mode {value!r}; use an index 0-6, a duration "
+                    f"like '5min'/'1h'/'3 hours', or 'disable'")
+            minutes = int(m.group(1))
+            if m.group(2) and m.group(2).startswith("h"):
+                minutes *= 60
+            n = {0: 0, 5: 1, 15: 2, 30: 3, 60: 4, 180: 5, 360: 6}.get(minutes)
+            if n is None:
+                raise ValueError(
+                    f"sleep mode {value!r} is not a supported duration; choose "
+                    f"5/15/30 minutes, 1/3/6 hours, or 'disable'")
+    if not 0 <= n <= 6:
+        raise ValueError(f"sleep mode index must be 0-6, got {value!r}")
+    return n
+
+
+def set_light_power(on: bool, port: str | None = None) -> None:
+    """Turn all LED power on/off (Config -> Features -> Light Power).
+
+    Mirrors the configurator's Light Power toggle (HID, persists across power
+    cycles). ``on`` is truthy for on, falsy for off.
+    """
+    with HIDTransport() as t:
+        t.set_light_power(bool(on))
+
+
+def get_light_power(port: str | None = None) -> bool:
+    """Read the current LED power state (Config -> Features -> Light Power)."""
+    with HIDTransport() as t:
+        return t.get_light_power()
+
+
+def set_sleep_mode(mode, port: str | None = None) -> None:
+    """Set the sleep-mode timer (Config -> Features -> Sleep Mode).
+
+    ``mode`` is passed to :func:`parse_sleep_mode` - an index ``0``-``6``, a
+    duration (``"5min"``, ``"30 minutes"``, ``"1h"``, ``"3 hours"``), or
+    ``"disable"``. Sent the same way as the configurator's dropdown (HID,
+    persists across power cycles).
+    """
+    with HIDTransport() as t:
+        t.set_sleep_mode(parse_sleep_mode(mode))
+
+
+def get_sleep_mode(port: str | None = None) -> int:
+    """Read the current sleep-mode index (0-6, see SLEEP_MODES)."""
+    with HIDTransport() as t:
+        return t.get_sleep_mode()
 
 
 def probe_devices() -> dict:
