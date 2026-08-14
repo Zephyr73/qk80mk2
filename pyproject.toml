@@ -1,0 +1,27 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "qk80"
+version = "0.1.0"
+description = "QK80 MK2 / tabkb LCD + Matrix LED host library and CLI"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+authors = [{ name = "Zephyr73" }]
+keywords = ["qk80", "qwertykeys", "keyboard", "lcd", "hid", "rgb", "via"]
+dependencies = [
+    "hidapi>=0.14",
+    "pillow>=10.0",
+    "pyserial>=3.5",
+]
+
+[project.scripts]
+qk80 = "qk80.cli:main"
+
+[project.urls]
+Repository = "https://github.com/Zephyr73/qk80mk2"
+
+[tool.hatch.build.targets.wheel]
+packages = ["qk80"]

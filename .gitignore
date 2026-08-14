@@ -1,18 +1,29 @@
 # Python
 __pycache__/
 *.py[cod]
-.venv/
-venv/
 *.egg-info/
 .eggs/
 build/
 dist/
 
+# uv (dependency manager)
+.venv/
+venv/
+# NOTE: uv.lock and .python-version are committed on purpose so `uv sync`
+# reproduces the exact environment.
+
+# Tooling caches
+.coverage
+htmlcov/
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
+
 # Environment / secrets
 .env
 .env.*
 
-# Generated upload files (qk80.py --save)
+# Generated upload files (python -m qk80 --save)
 *.tabml
 *.abkt
 *.abkg
@@ -21,8 +32,19 @@ dist/
 *.anps
 *.anpt
 
+# graphify knowledge-graph outputs (generated; rebuild with /graphify)
+graphify-out/
+
 # Logs
 *.log
+graphify-out/
+
+# Firmware reverse-engineering (raw binaries + tooling; don't commit)
+firmware/
+fw_analyze.py
+uf2_extract.py
+# ...but keep the write-up so others can reference it:
+!FIRMWARE.md
 
 # Editors / OS
 .idea/

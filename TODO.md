@@ -4,14 +4,14 @@
   - `git init`, add `.gitignore` (`.venv/`, `__pycache__/`, `*.tabml`, `.DS_Store`, etc.)
   - Initial commit; later tags for releases (`v1.0.0`, ...)
 - [ ] **Make code usable for public, universal IDs**
-  - Remove the hardcoded `VID 0x514B / PID 0x4D02` from `qk80.py` (constants used by
+  - Remove the hardcoded `VID 0x514B / PID 0x4D02` from `qk80/constants.py` (constants used by
     `CDCTransport.open`, `HIDTransport.open`, `probe_devices`).
   - Support a table of known boards (QK80 MK2, other tabkb/QK devices) and match
     against it; allow override via `--vid/--pid` flags / env vars / config file.
   - Update `probe_devices()` and the `devices` command to report by device.
 - [ ] **Better code**
-  - Split the 1100-line `qk80.py` into modules (encoders / transports / matrix / cli) or keep
-    single-file but shrink `main()`.
+  - [x] Split `qk80.py` into the `qk80/` package (`constants` / `encoders` / `matrix` /
+    `transport` / `api` / `cli`); CLI entry point is now `python -m qk80`.
   - De-duplicate the CDC vs HID transfer loops (shared chunk/fetch/cancel logic).
   - Full type hints, docstrings, and consistent error types (custom exception class).
   - Unit tests for encoders, color math, pattern parsing, echo validation.
