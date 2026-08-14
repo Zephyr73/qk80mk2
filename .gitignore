@@ -35,8 +35,12 @@ htmlcov/
 # graphify knowledge-graph outputs (generated; rebuild with /graphify)
 graphify-out/
 
+# Personal notes (not part of the project)
+TODO.md
+
 # Logs
 *.log
+TODO.md
 graphify-out/
 
 # Firmware reverse-engineering (raw binaries + tooling; don't commit)
